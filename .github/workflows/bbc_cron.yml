@@ -3,6 +3,9 @@ name: BBC Russian Parser
 on:
   workflow_dispatch: # Позволяет запускать скрипт через API (из cron-job.org)
 
+  repository_dispatch:
+    types: [ trigger_pipeline ]
+
 jobs:
   run-parser:
     runs-on: ubuntu-latest
