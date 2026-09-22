@@ -16,7 +16,6 @@ from email.mime.application import MIMEApplication
 GMAIL_USER = os.getenv('GMAIL_USER')
 GMAIL_PASSWORD = os.getenv('GMAIL_PASSWORD')
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
-YANDEX_DISK_TOKEN = os.getenv('YANDEX_DISK_TOKEN')
 STATE_FILE = 'bbc_state.json'
 MAX_EMAIL_SIZE_BYTES = 24 * 1024 * 1024  # Лимит 24 МБ для вложений Gmail
 
@@ -36,39 +35,8 @@ def save_state(state):
     with open(STATE_FILE, 'w', encoding='utf-8') as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
-def upload_to_yandex_disk(file_url, file_name, headers):
-    """Загружает файл на Яндекс.Диск через API и возвращает публичную ссылку"""
-    if not YANDEX_DISK_TOKEN:
-        print("Ошибка: YANDEX_DISK_TOKEN отсутствует в Secrets.")
-        return None
-        
-    ya_headers = {"Authorization": f"OAuth {YANDEX_DISK_TOKEN}"}
-    upload_url_api = "https://cloud-api.yandex.net/v1/disk/resources/upload"
-    params = {"path": f"disk/BBC_Videos/{file_name}", "overwrite": "true"}
-    
-    try:
-        requests.put("https://cloud-api.yandex.net/v1/disk/resources", params={"path": "disk/BBC_Videos"}, headers=ya_headers)
-        res = requests.get(upload_url_api, params=params, headers=ya_headers)
-        if res.status_code != 200:
-            return None
-            
-        upload_url = res.json().get("href")
-        file_res = requests.get(file_url, headers=headers, stream=True)
-        put_res = requests.put(upload_url, data=file_res.iter_content(chunk_size=1024*1024))
-        
-        if put_res.status_code == 201:
-            pub_url_api = "https://cloud-api.yandex.net/v1/disk/resources/publish"
-            requests.put(pub_url_api, params={"path": f"disk/BBC_Videos/{file_name}"}, headers=ya_headers)
-            
-            meta_url_api = "https://cloud-api.yandex.net/v1/disk/resources"
-            meta_res = requests.get(meta_url_api, params={"path": f"disk/BBC_Videos/{file_name}"}, headers=ya_headers)
-            return meta_res.json().get("public_url")
-    except Exception as e:
-        print(f"Ошибка загрузки на Яндекс.Диск: {e}")
-    return None
-
 def process_media_and_attachments(soup, headers):
-    """Обрабатывает картинки и видео (вложения или Я.Диск)"""
+    """Обрабатывает картинки и видео (только вложения)"""
     attachments = []
     image_counter = 0
     video_counter = 0
@@ -117,15 +85,6 @@ def process_media_and_attachments(soup, headers):
                     msg_vid.add_header('Content-Disposition', 'attachment', filename=file_name)
                     attachments.append(msg_vid)
                     print(f"Видео {file_name} добавлено во вложение.")
-            elif file_size >= MAX_EMAIL_SIZE_BYTES:
-                public_link = upload_to_yandex_disk(video_url, file_name, headers)
-                if public_link:
-                    link_tag = soup.new_tag('a', href=public_link)
-                    link_tag.string = f"📥 Скачать тяжелое видео со статьи на Яндекс.Диске ({file_size // (1024*1024)} МБ)"
-                    div_box = soup.new_tag('div', style="padding:15px; background:#fff3cd; border:1px solid #ffeeba; margin:15px 0; font-family:sans-serif;")
-                    div_box.append(link_tag)
-                    video_tag.insert_after(div_box)
-                    print(f"Видео загружено на Яндекс.Диск: {public_link}")
             video_counter += 1
         except Exception as e:
             print(f"Ошибка обработки видео {video_url}: {e}")
@@ -133,16 +92,15 @@ def process_media_and_attachments(soup, headers):
     return attachments
 
 def fix_image_containers_and_styles(soup):
-    """Удаляет деструктивные адаптивные стили врапперов и подгоняет картинки под ширину текста"""
+    """Сбрасывает адаптивные врапперы BBC и подгоняет картинки точно под ширину текстового контейнера"""
+    # Удаление оберток с фиксированной пропорцией/паддингами
     for div in soup.find_all('div', style=True):
         if 'padding-bottom' in div['style'] or 'background-' in div['style']:
-            div['style'] = "display: block; width: 100%; height: auto; padding: 0; margin: 10px 0;"
+            div['style'] = "display: block; width: 100%; height: auto; padding: 0; margin: 12px 0;"
             
-    for figure in soup.find_all(['figure', 'picture']):
-        figure['style'] = "width: 100%; max-width: 100%; margin: 10px 0; padding: 0; display: block;"
-
+    # Приведение всех изображений точно к ширине блока текста
     for img in soup.find_all('img'):
-        img['style'] = "width: 100% !important; max-width: 100% !important; height: auto !important; display: block; margin: 10px 0; border: 0;"
+        img['style'] = "max-width: 100%; width: 100%; height: auto; display: block; margin: 10px auto; border-radius: 4px;"
         if img.get('width'): del img['width']
         if img.get('height'): del img['height']
 
@@ -153,18 +111,22 @@ def send_email_with_limit_control(html_content_soup, headers):
 
     table_styles = """
     <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; background-color: #ffffff; }
+        .email-container { max-width: 600px; margin: 0 auto; padding: 10px; box-sizing: border-box; }
         table { border-collapse: collapse; width: 100%; margin: 15px 0; font-family: sans-serif; font-size: 14px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; font-weight: bold; }
         tr:nth-child(even) { background-color: #f9f9f9; }
-        img { width: 100% !important; max-width: 100% !important; height: auto !important; display: block !important; margin: 10px 0 !important; }
-        figure, picture { width: 100% !important; max-width: 100% !important; margin: 10px 0 !important; padding: 0 !important; }
+        img { max-width: 100% !important; width: 100% !important; height: auto !important; display: block !important; margin: 10px 0 !important; }
+        div, p, figure { max-width: 100% !important; box-sizing: border-box !important; }
     </style>
     """
     
     fix_image_containers_and_styles(html_content_soup)
     attachments = process_media_and_attachments(html_content_soup, headers)
-    final_html_text = table_styles + str(html_content_soup)
+    
+    # Оборачиваем всё содержимое статьи в строго фиксированный адаптивный блок
+    final_html_text = f"{table_styles}<div class='email-container'>{str(html_content_soup)}</div>"
 
     msg = MIMEMultipart('related')
     msg['Subject'] = "BBC"
