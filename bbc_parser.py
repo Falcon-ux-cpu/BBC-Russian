@@ -133,13 +133,14 @@ def process_media_and_attachments(soup, headers):
     return attachments
 
 def fix_image_containers_and_styles(soup):
-    """Удаляет деструктивные адаптивные стили врапперов и фиксит отображение картинок"""
-    for div in soup.find_all('div', style=True):
-        if 'padding-bottom' in div['style'] or 'background-' in div['style']:
-            div['style'] = "display: block; width: auto; height: auto; padding: 0; margin: 10px 0;"
+    """Сбрасывает контейнеры изображений и задает 100% ширину для фото"""
+    for div in soup.find_all('div'):
+        if div.get('style') and ('padding-bottom' in div['style'] or 'background-' in div['style']):
+            div['style'] = "display: block; width: 100%; height: auto; padding: 0; margin: 10px 0;"
             
     for img in soup.find_all('img'):
-        img['style'] = "max-width: 100%; height: auto; display: block; margin: 0 auto;"
+        # Принудительно растягиваем фото на 100% ширины текстового блока
+        img['style'] = "width: 100% !important; max-width: 100% !important; height: auto !important; display: block; margin: 10px 0;"
         if img.get('width'): del img['width']
         if img.get('height'): del img['height']
 
@@ -154,7 +155,8 @@ def send_email_with_limit_control(html_content_soup, headers):
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; font-weight: bold; }
         tr:nth-child(even) { background-color: #f9f9f9; }
-        img { max-width: 100% !important; height: auto !important; }
+        img { width: 100% !important; max-width: 100% !important; height: auto !important; display: block; margin: 10px 0; }
+        figure { margin: 0 0 15px 0 !important; width: 100% !important; }
     </style>
     """
     
@@ -303,61 +305,6 @@ def parse_bbc_russian():
                     new_state[item_id] = {'type': 'article', 'hash': content_hash, 'text': content_text, 'html': str(content_node)}
             else:
                 new_state[item_id] = old_item
-                    
-        # =====================================================================
-        # БЛОК ОТСЛЕЖИВАНИЯ LIVE ВРЕМЕННО ЗАКОММЕНТИРОВАН ПО ТРЕБОВАНИЮ
-        # =====================================================================
-        # elif type_ == 'live':
-        #     blocks = item_soup.find_all(attrs={"data-component": "live-reporter-block"}) or item_soup.find_all('article')
-        #     old_item = state.get(item_id, {'type': 'live', 'sent_blocks': []})
-        #     sent_blocks = old_item.get('sent_blocks', [])
-        #     current_sent_blocks = list(sent_blocks)
-        #     
-        #     new_updates = []
-        #     seen_texts_this_run = set()
-        #     
-        #     for block in blocks:
-        #         if not block:
-        #             continue
-        #         
-        #         block_soup = BeautifulSoup(str(block), 'html.parser')
-        #         cleaned_block = clean_and_extract_content(block_soup)
-        #         if not cleaned_block:
-        #             cleaned_block = block_soup
-        #         
-        #         pure_text = " ".join(cleaned_block.text.split())
-        #         if not pure_text or pure_text in seen_texts_this_run:
-        #             continue
-        #         
-        #         block_id = hashlib.md5(pure_text.encode('utf-8')).hexdigest()
-        #         
-        #         if block_id not in sent_blocks:
-        #             seen_texts_this_run.add(pure_text)
-        #             
-        #             time_element = (cleaned_block.find(attrs={"data-testid": "timestamp"}) or 
-        #                             cleaned_block.find('time') or 
-        #                             cleaned_block.find(class_=re.compile(r'Timestamp')))
-        #             
-        #             if time_element:
-        #                 br_tag = cleaned_block.new_tag('br')
-        #                 time_element.insert_after(br_tag)
-        #             
-        #             block_content_html = str(cleaned_block)
-        #             
-        #             update_html = f"<div style='border-left: 4px solid #b00; padding-left: 15px; margin-bottom: 25px;'>"
-        #             update_html += f"<div>{block_content_html}</div></div>"
-        #             
-        #             new_updates.append(update_html)
-        #             current_sent_blocks.append(block_id)
-        #     
-        #     if new_updates:
-        #         combined_html = "".join(new_updates)
-        #         email_soup = BeautifulSoup(combined_html, 'html.parser')
-        #         if send_email_with_limit_control(email_soup, headers):
-        #             new_state[item_id] = {'type': 'live', 'sent_blocks': current_sent_blocks}
-        #     else:
-        #         new_state[item_id] = old_item
-        # =====================================================================
 
     for k, v in state.items():
         if k not in new_state:
